@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>P2P Multiplayer - paste-and-share game</title>
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --muted:#94a3b8; --accent:#06b6d4; --glass: rgba(255,255,255,0.03);
+  }
+  html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue";background:linear-gradient(180deg,#071028 0%, #071b2a 100%);color:#e6eef6;}
+  .app{max-width:1200px;margin:24px auto;padding:20px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));box-shadow: 0 8px 30px rgba(2,6,23,0.6);}
+  header{display:flex;gap:16px;align-items:center;margin-bottom:18px}
+  h1{font-size:18px;margin:0}
+  .grid{display:grid;grid-template-columns: 420px 1fr; gap:16px;}
+  .card{background:var(--card);padding:12px;border-radius:10px;box-shadow: 0 6px 18px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.03);}
+  label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+  input, textarea, select, button{width:100%;box-sizing:border-box;border-radius:8px;padding:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit;font-size:13px}
+  textarea{min-height:220px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;resize:vertical}
+  .row{display:flex;gap:8px}
+  .small{font-size:12px;color:var(--muted)}
+  .status{padding:8px;border-radius:8px;background:var(--glass);font-size:13px}
+  .controls{display:flex;gap:8px;margin-top:8px}
+  .btn{background:linear-gradient(90deg,var(--accent), #0ea5a3);border:none;color:#042029;padding:10px 12px;cursor:pointer}
+  .btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+  .console{height:120px;overflow:auto;padding:8px;background:rgba(0,0,0,0.15);border-radius:8px;font-family:ui-monospace,monospace;font-size:12px}
+  .iframe-wrap{height:720px;display:flex;flex-direction:column;gap:8px}
+  iframe{flex:1;border-radius:10px;border:1px solid rgba(255,255,255,0.03);background:white}
+  footer{margin-top:12px;color:var(--muted);font-size:12px}
+  .inline{display:inline-block}
+  .top-row{display:flex;gap:8px;align-items:center}
+  .muted{color:var(--muted)}
+  .chip{padding:6px 8px;border-radius:999px;background:rgba(255,255,255,0.02);font-size:12px}
+  @media (max-width:980px){
+    .grid{grid-template-columns:1fr; }
+    .iframe-wrap{height:480px}
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>P2P Paste-and-Share Multiplayer (single file)</h1>
+      <div class="muted small">Paste a game's full HTML and send it to a peer. Both load and play via WebRTC DataChannel.</div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="top-row" style="justify-content:space-between">
+          <div>
+            <label>Signaling server URL</label>
+            <input id="signalUrl" value="wss://signaling.onrender.com" />
+            <div class="small muted">If your signaling server uses a different path or origin, edit this before connecting.</div>
+          </div>
+          <div style="min-width:160px">
+            <label>Room ID</label>
+            <div style="display:flex;gap:8px">
+              <input id="roomId" placeholder="room name" />
+              <button id="genRoom" class="btn secondary">Random</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:10px">
+          <label>Connection</label>
+          <div class="row">
+            <button id="connectBtn" class="btn">Connect</button>
+            <button id="closeBtn" class="btn secondary">Close</button>
+          </div>
+          <div style="margin-top:8px" class="status" id="connStatus">Disconnected</div>
+        </div>
+
+        <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,0.03)" />
+
+        <label>Pasted game HTML (full page)</label>
+        <textarea id="pastedHtml" placeholder="Paste full HTML of the game here..."></textarea>
+        <div class="controls">
+          <button id="sendCodeBtn" class="btn">Send to peer</button>
+          <button id="loadLocalBtn" class="btn secondary">Load locally</button>
+        </div>
+        <div class="small muted" style="margin-top:8px">When you send to peer, the remote will load the code automatically if connected. The game receives a `window.multiplayer` API injected by the host for in-game messaging.</div>
+
+        <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,0.03)" />
+
+        <label>Developer console / events</label>
+        <div class="console" id="console"></div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button id="clearLog" class="btn secondary">Clear</button>
+          <div class="muted small inline" id="peerCount">Peers: 0</div>
+        </div>
+      </div>
+
+      <div class="card iframe-wrap">
+        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+          <div style="display:flex;gap:8px;align-items:center">
+            <div class="chip" id="myRole">Role: None</div>
+            <div class="chip" id="dcState">DC: closed</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button id="sendTestMsg" class="btn secondary">Send test message</button>
+            <button id="requestHostBtn" class="btn secondary">Request Host (ask for code)</button>
+          </div>
+        </div>
+
+        <iframe id="gameFrame" sandbox="allow-scripts allow-same-origin" srcdoc="<html><body style='display:flex;align-items:center;justify-content:center;height:100vh;color:#222;background:#f3f4f6;font-family:system-ui'>No game loaded.<br><span style='font-size:12px;color:#666'>Paste a game on the left and click load, or have host send code.</span></body></html>"></iframe>
+
+        <footer>
+          <div><strong>How the multiplayer API works (for pasted games)</strong></div>
+          <div class="muted small">The site injects a small `window.multiplayer` object into your pasted HTML which contains:
+            <ul style="margin:6px 0 0 16px">
+              <li><code>multiplayer.send(obj)</code> — send a JSON-serializable object to peer(s)</li>
+              <li><code>multiplayer.onReceive(fn)</code> — receive objects from peer(s)</li>
+              <li><code>multiplayer.playerId</code> — your local id string</li>
+              <li><code>multiplayer.sendRaw(type, payload)</code> — lower-level messages</li>
+            </ul>
+          </div>
+        </footer>
+      </div>
+    </div>
+  </div>
+
+<script>
+/*
+  Single-file app that:
+   - connects to a signaling server via WebSocket
+   - negotiates a P2P WebRTC DataChannel
+   - allows pasting full HTML and sending it to the peer
+   - injects a small API to the game's iframe to enable multiplayer messaging
+*/
+
+/* ---------------------------
+   Utilities / UI helpers
+   --------------------------- */
+const $ = id => document.getElementById(id);
+const log = (...a) => {
+  const c = $('console');
+  const t = document.createElement('div');
+  t.textContent = '[' + new Date().toLocaleTimeString() + '] ' + a.map(x => (typeof x === 'object' ? JSON.stringify(x) : x)).join(' ');
+  c.appendChild(t);
+  c.scrollTop = c.scrollHeight;
+  console.log(...a);
+}
+$('clearLog').onclick = () => $('console').innerHTML = '';
+
+const rnd = (n=6)=> Math.random().toString(36).slice(2,2+n);
+$('genRoom').onclick = ()=> $('roomId').value = rnd(8);
+
+/* ---------------------------
+   Signaling over WebSocket
+   --------------------------- */
+let ws = null;
+let wsUrl = '';
+let room = '';
+let pc = null;
+let dc = null;
+let isOfferer = false;
+let localId = 'u-' + rnd(6);
+let pendingIce = [];
+let dcOpen = false;
+let queuedMessages = [];
+
+const STUN_SERVERS = [{urls: 'stun:stun.l.google.com:19302'}];
+
+function updateUI() {
+  $('connStatus').textContent = ws && ws.readyState === WebSocket.OPEN ? 'Signaling: connected' : 'Signaling: disconnected';
+  $('peerCount').textContent = 'Peers: ' + (dc && dcOpen ? 1 : 0);
+  $('myRole').textContent = 'Role: ' + (isOfferer ? 'offerer' : (pc ? 'answerer' : 'none'));
+  $('dcState').textContent = 'DC: ' + (dc ? dc.readyState : 'closed');
+}
+
+function connectSignaling() {
+  wsUrl = $('signalUrl').value.trim() || 'wss://signaling.onrender.com';
+  room = ($('roomId').value || '').trim();
+  if (!room) { alert('Enter a room ID or click Random'); return; }
+
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (e) {
+    log('WebSocket open error', e);
+    return;
+  }
+  log('Connecting to signaling server', wsUrl, 'room', room);
+  ws.onopen = () => {
+    log('WebSocket connected');
+    updateUI();
+    sendSignal({type:'join', room: room, id: localId});
+  };
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      log('SIG RECV', msg.type || 'unknown', msg);
+      handleSignal(msg);
+    } catch (e) {
+      log('Invalid signaling message', ev.data);
+    }
+  };
+  ws.onclose = () => { log('WebSocket closed'); updateUI(); };
+  ws.onerror = (e) => { log('WebSocket error', e); updateUI(); };
+}
+
+function sendSignal(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    log('Signaling socket not open', obj);
+    return;
+  }
+  ws.send(JSON.stringify(obj));
+}
+
+/* ---------------------------
+   WebRTC setup (DataChannel)
+   --------------------------- */
+async function createPeerConnection(offerer) {
+  isOfferer = !!offerer;
+  pc = new RTCPeerConnection({iceServers: STUN_SERVERS});
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      log('Local ICE candidate', e.candidate);
+      sendSignal({type:'ice', ice: e.candidate, room, id: localId});
+    }
+  };
+  pc.oniceconnectionstatechange = () => {
+    log('ICE state', pc.iceConnectionState);
+  };
+
+  if (!isOfferer) {
+    pc.ondatachannel = ev => {
+      log('Data channel incoming', ev.channel.label);
+      attachDataChannel(ev.channel);
+    };
+  } else {
+    const sendOpts = {ordered:true, maxRetransmits: null};
+    dc = pc.createDataChannel('game', sendOpts);
+    attachDataChannel(dc);
+  }
+  updateUI();
+}
+
+function attachDataChannel(channel) {
+  dc = channel;
+  dc.onopen = () => {
+    log('DataChannel open');
+    dcOpen = true;
+    updateUI();
+    // flush queued messages
+    while (queuedMessages.length) {
+      const m = queuedMessages.shift();
+      rawSend(m);
+    }
+    // announce local id
+    sendReliable({type:'hello', id: localId});
+  };
+  dc.onclose = () => { log('DataChannel closed'); dcOpen = false; updateUI(); };
+  dc.onmessage = (ev) => {
+    let data = ev.data;
+    try {
+      data = JSON.parse(ev.data);
+    } catch(e){}
+    log('DC onmessage', data);
+    handleDCMessage(data);
+  };
+  dc.onerror = (e) => log('DC error', e);
+}
+
+/* send over DataChannel (reliable). If not open, queue it. */
+function rawSend(obj) {
+  const text = typeof obj === 'string' ? obj : JSON.stringify(obj);
+  if (dc && dc.readyState === 'open') {
+    dc.send(text);
+  } else {
+    queuedMessages.push(obj);
+    log('Queued message, DC not open yet', obj);
+  }
+}
+
+/* Higher-level reliable send */
+function sendReliable(payload) {
+  rawSend({__meta: {from: localId, ts: Date.now()}, ...payload});
+}
+
+/* ---------------------------
+   Handling signaling messages
+   --------------------------- */
+async function handleSignal(msg) {
+  if (!msg) return;
+  switch(msg.type) {
+    case 'joined':
+      // server responded with join ack - if server also indicates existing peers, determine role
+      // msg.peers === number of peers
+      log('Joined room, peers:', msg.peers);
+      if (msg.peers > 1) {
+        // there is already someone: create offerer? We'll make the first to join the room the offerer.
+      }
+      break;
+    case 'offer':
+      log('Received offer from', msg.id);
+      // become answerer
+      await createPeerConnection(false);
+      await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      sendSignal({type:'answer', sdp: pc.localDescription, room, id: localId});
+      break;
+    case 'answer':
+      log('Received answer');
+      if (pc) {
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      }
+      break;
+    case 'ice':
+      if (!pc) {
+        // keep ICE until pc created
+        pendingIce.push(msg.ice);
+      } else {
+        try {
+          await pc.addIceCandidate(msg.ice);
+          log('Added remote ICE');
+        } catch (e) {
+          log('Error adding ICE', e);
+        }
+      }
+      break;
+    case 'peer-count':
+      // optional
+      break;
+    case 'start-offer':
+      // custom message to tell one peer to initiate offer
+      log('start-offer from server');
+      await startAsOfferer();
+      break;
+    default:
+      log('Unhandled signaling message', msg);
+  }
+}
+
+/* User-initiated: start negotiation as offerer */
+async function startAsOfferer() {
+  await createPeerConnection(true);
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  sendSignal({type:'offer', sdp: pc.localDescription, room, id: localId});
+}
+
+/* ---------------------------
+   DataChannel message handling
+   --------------------------- */
+function handleDCMessage(msg) {
+  if (!msg || typeof msg !== 'object') return;
+
+  switch (msg.type) {
+    case 'hello':
+      log('Peer hello', msg.id);
+      break;
+    case 'load-html':
+      // remote sent HTML code -> load into iframe
+      log('Peer sent code to load');
+      loadHtmlIntoFrame(msg.html, false);
+      break;
+    case 'iframe-msg':
+      // forward message to iframe content window
+      forwardToIframe(msg.payload);
+      break;
+    case 'request-host':
+      // remote requests host to send code
+      log('Peer requested host send code');
+      // host may respond with code automatically - nothing automatic here
+      break;
+    default:
+      // allow generic messages to be forwarded to iframe too
+      if (msg.__toIframe) {
+        forwardToIframe(msg.__toIframe);
+      } else {
+        log('DC message', msg);
+      }
+  }
+}
+
+/* ---------------------------
+   Iframe bridging: parent <-> iframe <-> remote
+   --------------------------- */
+
+const gameFrame = $('gameFrame');
+
+function injectBridgeAndWrap(html) {
+  // Inject a small script at top of <head> or before </body> that exposes window.multiplayer
+  // The bridge uses postMessage to parent and listens to messages from parent to forward to game code.
+  const bridge = `
+  <script>
+  (function(){
+    // unique id for this iframe instance
+    const _playerId = '${localId}';
+    // API exposed to pasted game
+    window.multiplayer = {
+      playerId: _playerId,
+      send: function(obj){
+        try { parent.postMessage({mp: true, type: 'outgoing', payload: obj}, '*'); } catch(e){console.error(e);}
+      },
+      onReceive: function(cb){
+        window.addEventListener('message', function(evt){
+          try {
+            if (!evt.data || !evt.data.mpInbound) return;
+            cb(evt.data.payload);
+          } catch(e){}
+        });
+      },
+      sendRaw: function(type, payload){
+        try { parent.postMessage({mp: true, type:'raw', rawType: type, payload: payload}, '*'); } catch(e){}
+      }
+    };
+
+    // let host page know iframe is ready
+    parent.postMessage({mp:true, type:'ready'}, '*');
+  })();
+  <\/script>
+  `;
+  // Prefer inserting bridge before </head> or at top if no head
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, match => match + bridge);
+  } else {
+    return bridge + html;
+  }
+}
+
+function loadHtmlIntoFrame(html, localLoad=true) {
+  // localLoad: true when user clicks "Load locally"
+  const wrapped = injectBridgeAndWrap(html);
+  gameFrame.srcdoc = wrapped;
+  log((localLoad ? 'Locally loaded game into iframe' : 'Loaded remote game into iframe'));
+}
+
+/* Forward messages from parent (this script) to iframe */
+function forwardToIframe(payload) {
+  try {
+    gameFrame.contentWindow.postMessage({mpInbound: true, payload}, '*');
+    log('Forwarded to iframe', payload);
+  } catch(e) {
+    log('Error forwarding to iframe', e);
+  }
+}
+
+/* Listen to messages FROM iframe (the injected API uses postMessage to parent) */
+window.addEventListener('message', (evt) => {
+  if (!evt.data || !evt.data.mp) return;
+  // possible messages: ready, outgoing, raw
+  const t = evt.data.type;
+  if (t === 'ready') {
+    log('Iframe ready and injected multiplayer API');
+  } else if (t === 'outgoing') {
+    // game inside iframe wants to send something to peer(s)
+    const payload = evt.data.payload;
+    log('Iframe->parent outgoing', payload);
+    // send over DataChannel
+    sendReliable({type:'iframe-msg', payload});
+  } else if (t === 'raw') {
+    const rtype = evt.data.rawType;
+    const payload = evt.data.payload;
+    sendReliable({type: 'iframe-raw', rawType: rtype, payload});
+  } else {
+    log('Unknown mp message from iframe', evt.data);
+  }
+});
+
+/* ---------------------------
+   UI buttons and flows
+   --------------------------- */
+$('connectBtn').onclick = async () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    connectSignaling();
+    // small delay, then tell server to start negotiation. Many signaling servers want explicit 'start-offer' or they auto route.
+    // we'll attempt to be the offerer after ws opens OR let server instruct via 'start-offer'.
+    // To maximize chance, set a timer to request server to ask peer to start.
+    const checker = setInterval(()=> {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        clearInterval(checker);
+        // Tell server we joined and ask to start offer; server may echo it to other peer.
+        sendSignal({type:'joined', room, id: localId});
+        // Try to start as offerer if this client believes it should: we'll start offer only if nobody else yet.
+        // To keep it simple: client that clicked Connect will attempt to be offerer; if other side also offers, negotiation still resolves.
+        setTimeout(()=> startAsOfferer().catch(e=>log('Offer error', e)), 300);
+      }
+    }, 150);
+  } else {
+    log('Already connected to signaling');
+  }
+};
+
+$('closeBtn').onclick = () => {
+  if (ws) ws.close();
+  if (pc) pc.close();
+  pc = null; dc = null; dcOpen = false; isOfferer = false;
+  updateUI();
+};
+
+/* Send pasted HTML to peer over DataChannel */
+$('sendCodeBtn').onclick = () => {
+  const html = $('pastedHtml').value || '';
+  if (!html) { alert('Paste some HTML first'); return; }
+  // if DC not open, warn but still queue
+  sendReliable({type:'load-html', html});
+  log('Sent page to peer (over DataChannel) — peer should load it automatically if DC open');
+};
+
+/* Load local pasted HTML into my own iframe (no network) */
+$('loadLocalBtn').onclick = () => {
+  const html = $('pastedHtml').value || '';
+  if (!html) { alert('Paste HTML first'); return; }
+  loadHtmlIntoFrame(html, true);
+};
+
+/* Test message to peer */
+$('sendTestMsg').onclick = () => {
+  sendReliable({type:'test', msg: 'hello from ' + localId});
+};
+
+/* Request host to send code */
+$('requestHostBtn').onclick = () => {
+  sendReliable({type:'request-host'});
+  log('Requested host to send code');
+};
+
+/* Clicking clear console handled above */
+
+/* Basic server-agnostic fallback: if no signaling server reachable,
+   allow local offer/answer copy-paste (manual) - optional but useful.
+   For simplicity we will not implement manual SDP in this file by default.
+*/
+
+/* ---------------------------
+   Handle graceful shutdown / UI updates
+   --------------------------- */
+setInterval(updateUI, 600);
+
+/* ---------------------------
+   Basic rules for your pasted game (documented to user)
+   ---------------------------
+   - The site injects `window.multiplayer` into the pasted game.
+   - Example inside your pasted game:
+       multiplayer.onReceive(data => { console.log('got', data); });
+       multiplayer.send({x:1, y:2});
+   - The parent page will forward any multiplayer.send() to the remote peer(s) via WebRTC DataChannel.
+*/
+
+/* Optionally expose functions for debugging in console */
+window.debug = {
+  sendReliable,
+  createPeerConnection,
+  startAsOfferer,
+  rawSend,
+  loadHtmlIntoFrame,
+  localId,
+};
+
+/* Extra: attempt to auto-open WebSocket if user pasted a special query param */
+(function maybeAutoFromUrl(){
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.get('auto') === '1') $('connectBtn').click();
+  } catch(e){}
+})();
+
+</script>
+</body>
+</html>
